@@ -10,6 +10,7 @@
 
 namespace te = tracktion;
 using namespace std::literals;
+using namespace juce;
 
 //==============================================================================
 namespace Helpers
