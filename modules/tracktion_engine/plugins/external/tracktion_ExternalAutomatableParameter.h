@@ -41,6 +41,16 @@ public:
         registerAsListener();
     }
 
+    ExternalAutomatableParameter (const juce::String& parameterID,
+        const juce::String& name,
+        Plugin& owner, int parameterIndex_,
+        juce::Range<float> valueRangeToUse)
+        : AutomatableParameter (parameterID, name, owner, valueRangeToUse),
+          parameterIndex (parameterIndex_)
+    {
+        registerAsListener();
+    }
+
     ~ExternalAutomatableParameter() override
     {
         CRASH_TRACER
