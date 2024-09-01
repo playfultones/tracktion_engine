@@ -406,12 +406,14 @@ struct RubberBandStretcher  : public TimeStretcher::Stretcher
     {
         if (percussive)
             return RubberBand::RubberBandStretcher::OptionProcessRealTime
-                | RubberBand::RubberBandStretcher::OptionPitchHighConsistency
-                | RubberBand::RubberBandStretcher::PercussiveOptions;
+                | RubberBand::RubberBandStretcher::OptionPitchHighQuality
+                | RubberBand::RubberBandStretcher::PercussiveOptions
+                | RubberBand::RubberBandStretcher::OptionEngineFiner;
 
         return RubberBand::RubberBandStretcher::OptionProcessRealTime
-            | RubberBand::RubberBandStretcher::OptionPitchHighConsistency
-            | RubberBand::RubberBandStretcher::OptionWindowShort;
+            | RubberBand::RubberBandStretcher::OptionPitchHighQuality
+            | RubberBand::RubberBandStretcher::OptionWindowShort
+            | RubberBand::RubberBandStretcher::OptionEngineFiner;
     }
     
     RubberBandStretcher (double sourceSampleRate, int samplesPerBlock, int numChannels, bool percussive)
