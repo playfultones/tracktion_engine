@@ -638,7 +638,8 @@ static juce::ValueTree createNoteValueTree (int pitch, BeatPosition beat, BeatDu
                             IDs::b, beat.inBeats(),
                             IDs::l, std::max (0.0, length.inBeats()),
                             IDs::v, vel,
-                            IDs::c, col);
+                            IDs::c, col,
+                            IDs::id, juce::Uuid().toString());
 }
 
 juce::ValueTree MidiNote::createNote (const MidiNote& n, BeatPosition newStart, BeatDuration newLength)
