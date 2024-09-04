@@ -630,6 +630,24 @@ private:
     int midiChannelBegin, midiChannelEnd, midiChannelLastAssigned;
 };
 
+static juce::int64 createNoteId()
+{
+    const auto fullGuid = juce::Uuid();
+    const uint8_t* guidBytes = fullGuid.getRawData();
+
+    // Use the first 8 bytes of the GUID to create a 64-bit value
+    juce::int64 id = 0;
+    for (int i = 0; i < 8; ++i)
+    {
+        id = (id << 8) | guidBytes[i];
+    }
+
+    // Ensure the highest bit is always 0 to avoid negative numbers
+    id &= ~(static_cast<juce::int64>(1) << 63);
+
+    return id;
+}
+
 //==============================================================================
 static juce::ValueTree createNoteValueTree (int pitch, BeatPosition beat, BeatDuration length, int vel, int col)
 {
@@ -639,7 +657,7 @@ static juce::ValueTree createNoteValueTree (int pitch, BeatPosition beat, BeatDu
                             IDs::l, std::max (0.0, length.inBeats()),
                             IDs::v, vel,
                             IDs::c, col,
-                            IDs::id, juce::Uuid().toString());
+                            IDs::id, createNoteId());
 }
 
 juce::ValueTree MidiNote::createNote (const MidiNote& n, BeatPosition newStart, BeatDuration newLength)
