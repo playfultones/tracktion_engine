@@ -15,135 +15,6 @@ namespace tracktion { inline namespace engine
 static constexpr int minimumSamplesToPlayWhenStopping = 8;
 static constexpr int maximumSimultaneousNotes = 32;
 
-
-struct SamplerPlugin::SampledNote   : public ReferenceCountedObject
-{
-public:
-    SampledNote (int midiNote, int keyNote,
-                 float velocity,
-                 const AudioFile& file,
-                 double sampleRate,
-                 int sampleDelayFromBufferStart,
-                 const juce::AudioBuffer<float>& data,
-                 int lengthInSamples,
-                 float gainDb,
-                 float pan,
-                 bool openEnded_)
-       : note (midiNote),
-         offset (-sampleDelayFromBufferStart),
-         audioData (data),
-         openEnded (openEnded_)
-    {
-        resampler[0].reset();
-        resampler[1].reset();
-
-        const float volumeSliderPos = decibelsToVolumeFaderPosition (gainDb - (20.0f * (1.0f - velocity)));
-        getGainsFromVolumeFaderPositionAndPan (volumeSliderPos, pan, getDefaultPanLaw(), gains[0], gains[1]);
-
-        const double hz = juce::MidiMessage::getMidiNoteInHertz (midiNote);
-        playbackRatio = hz / juce::MidiMessage::getMidiNoteInHertz (keyNote);
-        playbackRatio *= file.getSampleRate() / sampleRate;
-        samplesLeftToPlay = playbackRatio > 0 ? (1 + (int) (lengthInSamples / playbackRatio)) : 0;
-    }
-
-    void addNextBlock (juce::AudioBuffer<float>& outBuffer, int startSamp, int numSamples)
-    {
-        jassert (! isFinished);
-
-        if (offset < 0)
-        {
-            const int num = std::min (-offset, numSamples);
-            startSamp += num;
-            numSamples -= num;
-            offset += num;
-        }
-
-        auto numSamps = std::min (numSamples, samplesLeftToPlay);
-
-        if (numSamps > 0)
-        {
-            int numUsed = 0;
-
-            for (int i = std::min (2, outBuffer.getNumChannels()); --i >= 0;)
-            {
-                numUsed = resampler[i]
-                            .processAdding (playbackRatio,
-                                            audioData.getReadPointer (std::min (i, audioData.getNumChannels() - 1), offset),
-                                            outBuffer.getWritePointer (i, startSamp),
-                                            numSamps,
-                                            gains[i]);
-            }
-
-            offset += numUsed;
-            samplesLeftToPlay -= numSamps;
-
-            jassert (offset <= audioData.getNumSamples());
-        }
-
-        if (numSamples > numSamps && startFade > 0.0f)
-        {
-            startSamp += numSamps;
-            numSamps = numSamples - numSamps;
-            float endFade;
-
-            if (numSamps > 100)
-            {
-                endFade = 0.0f;
-                numSamps = 100;
-            }
-            else
-            {
-                endFade = std::max (0.0f, startFade - numSamps * 0.01f);
-            }
-
-            const int numSampsNeeded = 2 + juce::roundToInt ((numSamps + 2) * playbackRatio);
-            AudioScratchBuffer scratch (audioData.getNumChannels(), numSampsNeeded + 8);
-
-            if (offset + numSampsNeeded < audioData.getNumSamples())
-            {
-                for (int i = scratch.buffer.getNumChannels(); --i >= 0;)
-                    scratch.buffer.copyFrom (i, 0, audioData, i, offset, numSampsNeeded);
-            }
-            else
-            {
-                scratch.buffer.clear();
-            }
-
-            if (numSampsNeeded > 2)
-                AudioFadeCurve::applyCrossfadeSection (scratch.buffer, 0, numSampsNeeded - 2,
-                                                       AudioFadeCurve::linear, startFade, endFade);
-
-            startFade = endFade;
-
-            int numUsed = 0;
-
-            for (int i = std::min (2, outBuffer.getNumChannels()); --i >= 0;)
-                numUsed = resampler[i].processAdding (playbackRatio,
-                                                      scratch.buffer.getReadPointer (std::min (i, scratch.buffer.getNumChannels() - 1)),
-                                                      outBuffer.getWritePointer (i, startSamp),
-                                                      numSamps, gains[i]);
-
-            offset += numUsed;
-
-            if (startFade <= 0.0f)
-                isFinished = true;
-        }
-    }
-
-    juce::LagrangeInterpolator resampler[2];
-    int note;
-    int offset, samplesLeftToPlay = 0;
-    float gains[2];
-    double playbackRatio = 1.0;
-    const juce::AudioBuffer<float>& audioData;
-    float lastVals[4] = { 0, 0, 0, 0 };
-    float startFade = 1.0f;
-    bool openEnded, isFinished = false;
-
-private:
-    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (SampledNote)
-};
-
 //==============================================================================
 SamplerPlugin::SamplerPlugin (PluginCreationInfo info)  : Plugin (info)
 {
@@ -256,7 +127,7 @@ void SamplerPlugin::playNotes (const juce::BigInteger& keysDown)
                          && (! ss->audioFile.isNull())
                          && playingNotes.size() < maximumSimultaneousNotes)
                     {
-                        playingNotes.add (new SampledNote (note,
+                        playingNotes.add (createNote (note,
                                                            ss->keyNote,
                                                            0.75f,
                                                            ss->audioFile,
@@ -328,7 +199,7 @@ void SamplerPlugin::applyToBuffer (const PluginRenderContext& fc)
                         {
                             highlightedNotes.setBit (note);
 
-                            playingNotes.add (new SampledNote (note,
+                            playingNotes.add (createNote (note,
                                                                ss->keyNote,
                                                                m.getVelocity() / 127.0f,
                                                                ss->audioFile,
@@ -708,6 +579,10 @@ void SamplerPlugin::SamplerSound::refreshFile()
 {
     audioFile = AudioFile (owner.edit.engine);
     setExcerpt (startTime, length);
+}
+
+SamplerPlugin::SampledNote* SamplerPlugin::createNote (int midiNote, int keyNote, float velocity, const tracktion::AudioFile& file, double sR, int sampleDelayFromBufferStart, const juce::AudioBuffer<float>& data, int lengthInSamples, float gainDb, float pan, bool openEnded) {
+    return new SampledNote(midiNote, keyNote, velocity, file, sR, sampleDelayFromBufferStart, data, lengthInSamples, gainDb, pan, openEnded);
 }
 
 }} // namespace tracktion { inline namespace engine
