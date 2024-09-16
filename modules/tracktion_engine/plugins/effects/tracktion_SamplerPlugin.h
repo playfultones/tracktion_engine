@@ -245,6 +245,17 @@ protected:
                                      const juce::AudioBuffer<float>& data, int lengthInSamples,
                                      float gainDb, float pan, bool openEnded);
 
+    virtual void handleMessageBuffer(MidiMessageArray&);
+    virtual void handleNoteOnMessage(MidiMessageArray::MidiMessageWithSource&);
+
+    void handleOngoingNote (MidiMessageArray::MidiMessageWithSource&);
+    void handleNoteOffMessage(MidiMessageArray::MidiMessageWithSource&);
+    void handleMiscMessages(MidiMessageArray::MidiMessageWithSource&);
+
+    // this must be high enough for low freq sounds not to click
+    static inline constexpr int minimumSamplesToPlayWhenStopping = 8;
+    static inline constexpr int maximumSimultaneousNotes = 32;
+
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (SamplerPlugin)
 };
 

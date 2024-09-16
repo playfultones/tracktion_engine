@@ -11,10 +11,6 @@
 namespace tracktion { inline namespace engine
 {
 
-// this must be high enough for low freq sounds not to click
-static constexpr int minimumSamplesToPlayWhenStopping = 8;
-static constexpr int maximumSimultaneousNotes = 32;
-
 //==============================================================================
 SamplerPlugin::SamplerPlugin (PluginCreationInfo info)  : Plugin (info)
 {
@@ -172,70 +168,7 @@ void SamplerPlugin::applyToBuffer (const PluginRenderContext& fc)
                 highlightedNotes.clear();
             }
 
-            for (auto& m : *fc.bufferForMidiMessages)
-            {
-                if (m.isNoteOn())
-                {
-                    const int note = m.getNoteNumber();
-                    const int noteTimeSample = juce::roundToInt (m.getTimeStamp() * sampleRate);
-
-                    for (auto playingNote : playingNotes)
-                    {
-                        if (playingNote->note == note && ! playingNote->openEnded)
-                        {
-                            playingNote->samplesLeftToPlay = std::min (playingNote->samplesLeftToPlay,
-                                                                       std::max (minimumSamplesToPlayWhenStopping,
-                                                                                 noteTimeSample));
-                            highlightedNotes.clearBit (note);
-                        }
-                    }
-
-                    for (auto ss : soundList)
-                    {
-                        if (ss->minNote <= note
-                            && ss->maxNote >= note
-                            && ss->audioData.getNumSamples() > 0
-                            && playingNotes.size() < maximumSimultaneousNotes)
-                        {
-                            highlightedNotes.setBit (note);
-
-                            playingNotes.add (createNote (note,
-                                                               ss->keyNote,
-                                                               m.getVelocity() / 127.0f,
-                                                               ss->audioFile,
-                                                               sampleRate,
-                                                               noteTimeSample,
-                                                               ss->audioData,
-                                                               ss->fileLengthSamples,
-                                                               ss->gainDb,
-                                                               ss->pan,
-                                                               ss->openEnded));
-                        }
-                    }
-                }
-                else if (m.isNoteOff())
-                {
-                    const int note = m.getNoteNumber();
-                    const int noteTimeSample = juce::roundToInt (m.getTimeStamp() * sampleRate);
-
-                    for (auto playingNote : playingNotes)
-                    {
-                        if (playingNote->note == note && ! playingNote->openEnded)
-                        {
-                            playingNote->samplesLeftToPlay = std::min (playingNote->samplesLeftToPlay,
-                                                                       std::max (minimumSamplesToPlayWhenStopping,
-                                                                                 noteTimeSample));
-
-                            highlightedNotes.clearBit (note);
-                        }
-                    }
-                }
-                else if (m.isAllNotesOff() || m.isAllSoundOff())
-                {
-                    playingNotes.clear();
-                    highlightedNotes.clear();
-                }
-            }
+            handleMessageBuffer(*fc.bufferForMidiMessages);
         }
 
         for (int i = playingNotes.size(); --i >= 0;)
@@ -583,6 +516,95 @@ void SamplerPlugin::SamplerSound::refreshFile()
 
 SamplerPlugin::SampledNote* SamplerPlugin::createNote (int midiNote, int keyNote, float velocity, const tracktion::AudioFile& file, double sR, int sampleDelayFromBufferStart, const juce::AudioBuffer<float>& data, int lengthInSamples, float gainDb, float pan, bool openEnded) {
     return new SampledNote(midiNote, keyNote, velocity, file, sR, sampleDelayFromBufferStart, data, lengthInSamples, gainDb, pan, openEnded);
+}
+
+void SamplerPlugin::handleNoteOnMessage (tracktion::MidiMessageArray::MidiMessageWithSource& m) {
+    const int note = m.getNoteNumber();
+    const int noteTimeSample = juce::roundToInt (m.getTimeStamp() * sampleRate);
+
+    handleOngoingNote(m);
+
+    for (auto ss : soundList)
+    {
+        if (ss->minNote <= note
+            && ss->maxNote >= note
+            && ss->audioData.getNumSamples() > 0
+            && playingNotes.size() < maximumSimultaneousNotes)
+        {
+            highlightedNotes.setBit (note);
+
+            playingNotes.add (createNote (note,
+                ss->keyNote,
+                m.getVelocity() / 127.0f,
+                ss->audioFile,
+                sampleRate,
+                noteTimeSample,
+                ss->audioData,
+                ss->fileLengthSamples,
+                ss->gainDb,
+                ss->pan,
+                ss->openEnded));
+        }
+    }
+}
+
+void SamplerPlugin::handleOngoingNote (MidiMessageArray::MidiMessageWithSource& m) {
+    const int note = m.getNoteNumber();
+    const int noteTimeSample = juce::roundToInt (m.getTimeStamp() * sampleRate);
+
+    for (auto playingNote : playingNotes)
+    {
+        if (playingNote->note == note && ! playingNote->openEnded)
+        {
+            playingNote->samplesLeftToPlay = std::min (playingNote->samplesLeftToPlay,
+                std::max (minimumSamplesToPlayWhenStopping,
+                    noteTimeSample));
+            highlightedNotes.clearBit (note);
+        }
+    }
+}
+
+void SamplerPlugin::handleNoteOffMessage (MidiMessageArray::MidiMessageWithSource& m) {
+    const int note = m.getNoteNumber();
+    const int noteTimeSample = juce::roundToInt (m.getTimeStamp() * sampleRate);
+
+    for (auto playingNote : playingNotes)
+    {
+        if (playingNote->note == note && ! playingNote->openEnded)
+        {
+            playingNote->samplesLeftToPlay = std::min (playingNote->samplesLeftToPlay,
+                std::max (minimumSamplesToPlayWhenStopping,
+                    noteTimeSample));
+
+            highlightedNotes.clearBit (note);
+        }
+    }
+}
+
+void SamplerPlugin::handleMiscMessages (MidiMessageArray::MidiMessageWithSource& m) {
+    if (m.isAllNotesOff() || m.isAllSoundOff())
+    {
+        playingNotes.clear();
+        highlightedNotes.clear();
+    }
+}
+
+void SamplerPlugin::handleMessageBuffer (MidiMessageArray& bufferForMidiMessages) {
+    for (auto& m : bufferForMidiMessages)
+    {
+        if (m.isNoteOn())
+        {
+            handleNoteOnMessage(m);
+        }
+        else if (m.isNoteOff())
+        {
+            handleNoteOffMessage(m);
+        }
+        else
+        {
+            handleMiscMessages(m);
+        }
+    }
 }
 
 }} // namespace tracktion { inline namespace engine
