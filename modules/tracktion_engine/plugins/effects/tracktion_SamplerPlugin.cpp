@@ -557,8 +557,9 @@ void SamplerPlugin::handleOngoingNote (MidiMessageArray::MidiMessageWithSource& 
         if (playingNote->note == note && ! playingNote->openEnded)
         {
             playingNote->samplesLeftToPlay = std::min (playingNote->samplesLeftToPlay,
-                std::max (minimumSamplesToPlayWhenStopping,
+                std::max (getMinimumSamplesToPlay(),
                     noteTimeSample));
+            playingNote->triggerRelease();
             highlightedNotes.clearBit (note);
         }
     }
@@ -573,8 +574,9 @@ void SamplerPlugin::handleNoteOffMessage (MidiMessageArray::MidiMessageWithSourc
         if (playingNote->note == note && ! playingNote->openEnded)
         {
             playingNote->samplesLeftToPlay = std::min (playingNote->samplesLeftToPlay,
-                std::max (minimumSamplesToPlayWhenStopping,
+                std::max (getMinimumSamplesToPlay(),
                     noteTimeSample));
+            playingNote->triggerRelease();
 
             highlightedNotes.clearBit (note);
         }
@@ -605,6 +607,18 @@ void SamplerPlugin::handleMessageBuffer (MidiMessageArray& bufferForMidiMessages
             handleMiscMessages(m);
         }
     }
+}
+
+void SamplerPlugin::setReleaseTimeSeconds (float seconds) noexcept {
+    releaseTimeSeconds.store(seconds);
+}
+
+float SamplerPlugin::getReleaseTimeSeconds() const noexcept {
+    return releaseTimeSeconds.load();
+}
+
+int SamplerPlugin::getMinimumSamplesToPlay() const noexcept {
+    return std::max(minimumSamplesToPlayWhenStopping, static_cast<int>(releaseTimeSeconds * sampleRate));
 }
 
 }} // namespace tracktion { inline namespace engine

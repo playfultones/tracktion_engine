@@ -46,6 +46,9 @@ public:
     void playNotes (const juce::BigInteger& keysDown);
     void allNotesOff();
 
+    void setReleaseTimeSeconds (float seconds) noexcept;
+    float getReleaseTimeSeconds() const noexcept;
+
     //==============================================================================
     static const char* getPluginName()                  { return NEEDS_TRANS("Sampler"); }
     static const char* xmlTypeName;
@@ -128,6 +131,15 @@ protected:
             playbackRatio = hz / juce::MidiMessage::getMidiNoteInHertz (keyNote);
             playbackRatio *= file.getSampleRate() / sampleRate;
             samplesLeftToPlay = playbackRatio > 0 ? (1 + (int) (lengthInSamples / playbackRatio)) : 0;
+            sR = sampleRate;
+            adsr.setSampleRate(sampleRate);
+            juce::ADSR::Parameters params;
+            params.attack = 0.f;
+            params.decay = 0.f;
+            params.sustain = 1.f;
+            params.release = (float)samplesLeftToPlay / (float)sR;
+            adsr.setParameters(params);
+            adsr.noteOn();
         }
 
         virtual void addNextBlock (juce::AudioBuffer<float>& outBuffer, int startSamp, int numSamples)
@@ -157,6 +169,9 @@ protected:
                                       numSamps,
                                       gains[i]);
                 }
+
+                if(releaseStageTriggered)
+                    adsr.applyEnvelopeToBuffer(outBuffer, startSamp, numSamps);
 
                 offset += numUsed;
                 samplesLeftToPlay -= numSamps;
@@ -207,10 +222,28 @@ protected:
                         outBuffer.getWritePointer (i, startSamp),
                         numSamps, gains[i]);
 
+                if(releaseStageTriggered)
+                    adsr.applyEnvelopeToBuffer(outBuffer, startSamp, numSamps);
+
                 offset += numUsed;
 
                 if (startFade <= 0.0f)
                     isFinished = true;
+            }
+        }
+
+        void triggerRelease()
+        {
+            if (! releaseStageTriggered)
+            {
+                juce::ADSR::Parameters params;
+                params.attack = 0.f;
+                params.decay = 0.f;
+                params.sustain = 1.f;
+                params.release = (float)samplesLeftToPlay / (float)sR;
+                adsr.setParameters(params);
+                adsr.noteOff();
+                releaseStageTriggered = true;
             }
         }
 
@@ -224,6 +257,9 @@ protected:
         float startFade = 1.0f;
         bool openEnded, isFinished = false;
         int numSamps = 0;
+        bool releaseStageTriggered = false;
+        double sR = 0.0;
+        juce::ADSR adsr;
 
     private:
         JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (SampledNote)
@@ -255,6 +291,9 @@ protected:
     // this must be high enough for low freq sounds not to click
     static inline constexpr int minimumSamplesToPlayWhenStopping = 8;
     static inline constexpr int maximumSimultaneousNotes = 32;
+
+    std::atomic<float> releaseTimeSeconds = 0.f;
+    int getMinimumSamplesToPlay() const noexcept;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (SamplerPlugin)
 };
