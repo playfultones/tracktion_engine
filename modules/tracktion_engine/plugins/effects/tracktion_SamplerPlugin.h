@@ -103,34 +103,6 @@ public:
     private:
         JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (SamplerSound)
     };
-private:
-    class TempAudioBuffer;
-    class TempAudioBufferList
-    {
-    public:
-        TempAudioBufferList(double sampleRate);
-
-        struct Buffer;
-        TempAudioBuffer get (int numChans, int numSamples);
-    private:
-        juce::OwnedArray<Buffer> buffers;
-        juce::CriticalSection lock;
-        double sampleRate = 41000.0;
-    };
-    std::unique_ptr<TempAudioBufferList> tempAudioBufferList;
-
-    class TempAudioBuffer
-    {
-    private:
-        TempAudioBufferList::Buffer* allocatedBuffer;
-    public:
-        TempAudioBuffer(int numChans, int numSamples, TempAudioBufferList::Buffer*);
-        ~TempAudioBuffer() noexcept;
-
-        juce::AudioBuffer<float>& buffer;
-    private:
-        JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (TempAudioBuffer)
-    };
 protected:
     //==============================================================================
     struct SampledNote   : public ReferenceCountedObject

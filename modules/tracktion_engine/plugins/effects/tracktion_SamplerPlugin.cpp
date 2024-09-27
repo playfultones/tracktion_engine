@@ -11,49 +11,6 @@
 namespace tracktion { inline namespace engine
 {
 
-struct SamplerPlugin::TempAudioBufferList::Buffer
-{
-    Buffer(int numChans, int numSamples)
-    : buffer(numChans, numSamples)
-    {}
-    juce::AudioBuffer<float> buffer;
-    std::atomic<bool> isFree { true };
-};
-
-SamplerPlugin::TempAudioBufferList::TempAudioBufferList(double _sampleRate)
-: sampleRate(_sampleRate)
-{
-    juce::ScopedLock sl(lock);
-    for (int i = 0; i < maximumSimultaneousNotes; ++i)
-        buffers.add (new Buffer(2, static_cast<int>(sampleRate * 2)));
-}
-
-SamplerPlugin::TempAudioBuffer SamplerPlugin::TempAudioBufferList::get(int numChans, int numSamples)
-{
-    for (auto b : buffers)
-        if (b->isFree.exchange (false))
-            return SamplerPlugin::TempAudioBuffer(numChans, numSamples, b);
-
-    juce::ScopedLock sl(lock);
-    juce::Logger::writeToLog("Creating new buffer");
-    auto newBuffer = buffers.add (new SamplerPlugin::TempAudioBufferList::Buffer(numChans, numSamples));
-    newBuffer->isFree = false;
-
-    return SamplerPlugin::TempAudioBuffer(numChans, numSamples, newBuffer);
-}
-
-SamplerPlugin::TempAudioBuffer::TempAudioBuffer(int numChans, int numSamples, SamplerPlugin::TempAudioBufferList::Buffer* b)
-: allocatedBuffer(b),
-  buffer(b->buffer)
-{
-    buffer.setSize(numChans, numSamples, false, false, true);
-}
-
-SamplerPlugin::TempAudioBuffer::~TempAudioBuffer() noexcept
-{
-    allocatedBuffer->isFree = true;
-}
-
 //==============================================================================
 SamplerPlugin::SamplerPlugin (PluginCreationInfo info)  : Plugin (info)
 {
@@ -134,9 +91,6 @@ void SamplerPlugin::initialise (const PluginInitialisationInfo& pII)
 {
     const juce::ScopedLock sl (lock);
     allNotesOff();
-
-    if(tempAudioBufferList == nullptr)
-        tempAudioBufferList = std::make_unique<TempAudioBufferList>(pII.sampleRate);
 }
 
 void SamplerPlugin::deinitialise()
