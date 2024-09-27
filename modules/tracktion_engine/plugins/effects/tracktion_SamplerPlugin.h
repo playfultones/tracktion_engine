@@ -46,8 +46,11 @@ public:
     void playNotes (const juce::BigInteger& keysDown);
     void allNotesOff();
 
-    void setReleaseTimeSeconds (float seconds) noexcept;
-    float getReleaseTimeSeconds() const noexcept;
+    void setAttackTime (float seconds) noexcept;
+    void setDecayTime (float seconds) noexcept;
+    void setSustainLevel (float level) noexcept;
+    void setReleaseTime (float seconds) noexcept;
+    juce::ADSR::Parameters getADSRParams() const noexcept;
 
     //==============================================================================
     static const char* getPluginName()                  { return NEEDS_TRANS("Sampler"); }
@@ -100,7 +103,34 @@ public:
     private:
         JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (SamplerSound)
     };
+private:
+    class TempAudioBuffer;
+    class TempAudioBufferList
+    {
+    public:
+        TempAudioBufferList(double sampleRate);
 
+        struct Buffer;
+        TempAudioBuffer get (int numChans, int numSamples);
+    private:
+        juce::OwnedArray<Buffer> buffers;
+        juce::CriticalSection lock;
+        double sampleRate = 41000.0;
+    };
+    std::unique_ptr<TempAudioBufferList> tempAudioBufferList;
+
+    class TempAudioBuffer
+    {
+    private:
+        TempAudioBufferList::Buffer* allocatedBuffer;
+    public:
+        TempAudioBuffer(int numChans, int numSamples, TempAudioBufferList::Buffer*);
+        ~TempAudioBuffer() noexcept;
+
+        juce::AudioBuffer<float>& buffer;
+    private:
+        JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (TempAudioBuffer)
+    };
 protected:
     //==============================================================================
     struct SampledNote   : public ReferenceCountedObject
@@ -115,11 +145,14 @@ protected:
             int lengthInSamples,
             float gainDb,
             float pan,
-            bool openEnded_)
+            bool openEnded_,
+            SamplerPlugin& plugin)
             : note (midiNote),
               offset (-sampleDelayFromBufferStart),
               audioData (data),
-              openEnded (openEnded_)
+              openEnded (openEnded_),
+              owner (plugin),
+              tempOutBuffer(owner.tempAudioBufferList->get(2, (int)sampleRate))
         {
             resampler[0].reset();
             resampler[1].reset();
@@ -131,14 +164,8 @@ protected:
             playbackRatio = hz / juce::MidiMessage::getMidiNoteInHertz (keyNote);
             playbackRatio *= file.getSampleRate() / sampleRate;
             samplesLeftToPlay = playbackRatio > 0 ? (1 + (int) (lengthInSamples / playbackRatio)) : 0;
-            sR = sampleRate;
             adsr.setSampleRate(sampleRate);
-            juce::ADSR::Parameters params;
-            params.attack = 0.f;
-            params.decay = 0.f;
-            params.sustain = 1.f;
-            params.release = (float)samplesLeftToPlay / (float)sR;
-            adsr.setParameters(params);
+            adsr.setParameters(owner.getADSRParams());
             adsr.noteOn();
         }
 
@@ -159,19 +186,22 @@ protected:
             if (numSamps > 0)
             {
                 int numUsed = 0;
+                tempOutBuffer.buffer.setSize(outBuffer.getNumChannels(), outBuffer.getNumSamples(), false, false, true);
+                tempOutBuffer.buffer.clear();
 
                 for (int i = std::min (2, outBuffer.getNumChannels()); --i >= 0;)
                 {
                     numUsed = resampler[i]
                                   .processAdding (playbackRatio,
                                       audioData.getReadPointer (std::min (i, audioData.getNumChannels() - 1), offset),
-                                      outBuffer.getWritePointer (i, startSamp),
+                                      tempOutBuffer.buffer.getWritePointer (i, startSamp),
                                       numSamps,
                                       gains[i]);
                 }
 
-                if(releaseStageTriggered)
-                    adsr.applyEnvelopeToBuffer(outBuffer, startSamp, numSamps);
+                adsr.applyEnvelopeToBuffer(tempOutBuffer.buffer, startSamp, numSamps);
+                for (int i = std::min (2, outBuffer.getNumChannels()); --i >= 0;)
+                    outBuffer.addFrom (i, startSamp, tempOutBuffer.buffer, i, 0, numSamps);
 
                 offset += numUsed;
                 samplesLeftToPlay -= numSamps;
@@ -215,35 +245,23 @@ protected:
                 startFade = endFade;
 
                 int numUsed = 0;
+                tempOutBuffer.buffer.setSize(outBuffer.getNumChannels(), outBuffer.getNumSamples(), false, false, true);
+                tempOutBuffer.buffer.clear();
 
                 for (int i = std::min (2, outBuffer.getNumChannels()); --i >= 0;)
                     numUsed = resampler[i].processAdding (playbackRatio,
                         scratch.buffer.getReadPointer (std::min (i, scratch.buffer.getNumChannels() - 1)),
-                        outBuffer.getWritePointer (i, startSamp),
+                        tempOutBuffer.buffer.getWritePointer (i, startSamp),
                         numSamps, gains[i]);
 
-                if(releaseStageTriggered)
-                    adsr.applyEnvelopeToBuffer(outBuffer, startSamp, numSamps);
+                adsr.applyEnvelopeToBuffer(tempOutBuffer.buffer, startSamp, numSamps);
+                for (int i = std::min (2, outBuffer.getNumChannels()); --i >= 0;)
+                    outBuffer.addFrom (i, startSamp, tempOutBuffer.buffer, i, 0, numSamps);
 
                 offset += numUsed;
 
                 if (startFade <= 0.0f)
                     isFinished = true;
-            }
-        }
-
-        void triggerRelease()
-        {
-            if (! releaseStageTriggered)
-            {
-                juce::ADSR::Parameters params;
-                params.attack = 0.f;
-                params.decay = 0.f;
-                params.sustain = 1.f;
-                params.release = (float)samplesLeftToPlay / (float)sR;
-                adsr.setParameters(params);
-                adsr.noteOff();
-                releaseStageTriggered = true;
             }
         }
 
@@ -257,11 +275,11 @@ protected:
         float startFade = 1.0f;
         bool openEnded, isFinished = false;
         int numSamps = 0;
-        bool releaseStageTriggered = false;
-        double sR = 0.0;
         juce::ADSR adsr;
 
     private:
+        SamplerPlugin& owner;
+        TempAudioBuffer tempOutBuffer;
         JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (SampledNote)
     };
 
@@ -290,8 +308,11 @@ protected:
 
     // this must be high enough for low freq sounds not to click
     static inline constexpr int minimumSamplesToPlayWhenStopping = 8;
-    static inline constexpr int maximumSimultaneousNotes = 32;
+    static inline constexpr int maximumSimultaneousNotes = 16;
 
+    std::atomic<float> attackTimeSeconds = 0.f;
+    std::atomic<float> decayTimeSeconds = 0.f;
+    std::atomic<float> sustainLevel = 1.f;
     std::atomic<float> releaseTimeSeconds = 0.f;
     int getMinimumSamplesToPlay() const noexcept;
 

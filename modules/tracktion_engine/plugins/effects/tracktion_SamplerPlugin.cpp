@@ -11,6 +11,49 @@
 namespace tracktion { inline namespace engine
 {
 
+struct SamplerPlugin::TempAudioBufferList::Buffer
+{
+    Buffer(int numChans, int numSamples)
+    : buffer(numChans, numSamples)
+    {}
+    juce::AudioBuffer<float> buffer;
+    std::atomic<bool> isFree { true };
+};
+
+SamplerPlugin::TempAudioBufferList::TempAudioBufferList(double _sampleRate)
+: sampleRate(_sampleRate)
+{
+    juce::ScopedLock sl(lock);
+    for (int i = 0; i < maximumSimultaneousNotes; ++i)
+        buffers.add (new Buffer(2, static_cast<int>(sampleRate * 2)));
+}
+
+SamplerPlugin::TempAudioBuffer SamplerPlugin::TempAudioBufferList::get(int numChans, int numSamples)
+{
+    for (auto b : buffers)
+        if (b->isFree.exchange (false))
+            return SamplerPlugin::TempAudioBuffer(numChans, numSamples, b);
+
+    juce::ScopedLock sl(lock);
+    juce::Logger::writeToLog("Creating new buffer");
+    auto newBuffer = buffers.add (new SamplerPlugin::TempAudioBufferList::Buffer(numChans, numSamples));
+    newBuffer->isFree = false;
+
+    return SamplerPlugin::TempAudioBuffer(numChans, numSamples, newBuffer);
+}
+
+SamplerPlugin::TempAudioBuffer::TempAudioBuffer(int numChans, int numSamples, SamplerPlugin::TempAudioBufferList::Buffer* b)
+: allocatedBuffer(b),
+  buffer(b->buffer)
+{
+    buffer.setSize(numChans, numSamples, false, false, true);
+}
+
+SamplerPlugin::TempAudioBuffer::~TempAudioBuffer() noexcept
+{
+    allocatedBuffer->isFree = true;
+}
+
 //==============================================================================
 SamplerPlugin::SamplerPlugin (PluginCreationInfo info)  : Plugin (info)
 {
@@ -87,10 +130,13 @@ void SamplerPlugin::handleAsyncUpdate()
     changed();
 }
 
-void SamplerPlugin::initialise (const PluginInitialisationInfo&)
+void SamplerPlugin::initialise (const PluginInitialisationInfo& pII)
 {
     const juce::ScopedLock sl (lock);
     allNotesOff();
+
+    if(tempAudioBufferList == nullptr)
+        tempAudioBufferList = std::make_unique<TempAudioBufferList>(pII.sampleRate);
 }
 
 void SamplerPlugin::deinitialise()
@@ -515,7 +561,7 @@ void SamplerPlugin::SamplerSound::refreshFile()
 }
 
 SamplerPlugin::SampledNote* SamplerPlugin::createNote (int midiNote, int keyNote, float velocity, const tracktion::AudioFile& file, double sR, int sampleDelayFromBufferStart, const juce::AudioBuffer<float>& data, int lengthInSamples, float gainDb, float pan, bool openEnded) {
-    return new SampledNote(midiNote, keyNote, velocity, file, sR, sampleDelayFromBufferStart, data, lengthInSamples, gainDb, pan, openEnded);
+    return new SampledNote(midiNote, keyNote, velocity, file, sR, sampleDelayFromBufferStart, data, lengthInSamples, gainDb, pan, openEnded, *this);
 }
 
 void SamplerPlugin::handleNoteOnMessage (tracktion::MidiMessageArray::MidiMessageWithSource& m) {
@@ -559,7 +605,7 @@ void SamplerPlugin::handleOngoingNote (MidiMessageArray::MidiMessageWithSource& 
             playingNote->samplesLeftToPlay = std::min (playingNote->samplesLeftToPlay,
                 std::max (getMinimumSamplesToPlay(),
                     noteTimeSample));
-            playingNote->triggerRelease();
+            playingNote->adsr.noteOff();
             highlightedNotes.clearBit (note);
         }
     }
@@ -576,7 +622,7 @@ void SamplerPlugin::handleNoteOffMessage (MidiMessageArray::MidiMessageWithSourc
             playingNote->samplesLeftToPlay = std::min (playingNote->samplesLeftToPlay,
                 std::max (getMinimumSamplesToPlay(),
                     noteTimeSample));
-            playingNote->triggerRelease();
+            playingNote->adsr.noteOff();
 
             highlightedNotes.clearBit (note);
         }
@@ -608,13 +654,29 @@ void SamplerPlugin::handleMessageBuffer (MidiMessageArray& bufferForMidiMessages
         }
     }
 }
+void SamplerPlugin::setAttackTime (float seconds) noexcept {
+    attackTimeSeconds.store(seconds);
+}
 
-void SamplerPlugin::setReleaseTimeSeconds (float seconds) noexcept {
+void SamplerPlugin::setDecayTime (float seconds) noexcept {
+    decayTimeSeconds.store(seconds);
+}
+
+void SamplerPlugin::setSustainLevel (float level) noexcept {
+    sustainLevel.store(level);
+}
+
+void SamplerPlugin::setReleaseTime (float seconds) noexcept {
     releaseTimeSeconds.store(seconds);
 }
 
-float SamplerPlugin::getReleaseTimeSeconds() const noexcept {
-    return releaseTimeSeconds.load();
+juce::ADSR::Parameters SamplerPlugin::getADSRParams() const noexcept {
+    juce::ADSR::Parameters params;
+    params.attack = attackTimeSeconds.load();
+    params.decay = decayTimeSeconds.load();
+    params.sustain = sustainLevel.load();
+    params.release = releaseTimeSeconds.load();
+    return params;
 }
 
 int SamplerPlugin::getMinimumSamplesToPlay() const noexcept {
