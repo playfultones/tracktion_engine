@@ -146,13 +146,11 @@ protected:
             float gainDb,
             float pan,
             bool openEnded_,
-            SamplerPlugin& plugin)
+            juce::ADSR::Parameters adsrParams)
             : note (midiNote),
               offset (-sampleDelayFromBufferStart),
               audioData (data),
-              openEnded (openEnded_),
-              owner (plugin),
-              tempOutBuffer(owner.tempAudioBufferList->get(2, (int)sampleRate))
+              openEnded (openEnded_)
         {
             resampler[0].reset();
             resampler[1].reset();
@@ -165,7 +163,7 @@ protected:
             playbackRatio *= file.getSampleRate() / sampleRate;
             samplesLeftToPlay = playbackRatio > 0 ? (1 + (int) (lengthInSamples / playbackRatio)) : 0;
             adsr.setSampleRate(sampleRate);
-            adsr.setParameters(owner.getADSRParams());
+            adsr.setParameters(adsrParams);
             adsr.noteOn();
         }
 
@@ -186,22 +184,24 @@ protected:
             if (numSamps > 0)
             {
                 int numUsed = 0;
-                tempOutBuffer.buffer.setSize(outBuffer.getNumChannels(), outBuffer.getNumSamples(), false, false, true);
-                tempOutBuffer.buffer.clear();
 
-                for (int i = std::min (2, outBuffer.getNumChannels()); --i >= 0;)
+                auto envValues = std::vector<float>((size_t)numSamps);
+                for (size_t i = 0; i < (size_t) numSamps; ++i)
+                    envValues[i] = adsr.getNextSample();
+                const int numChannels = std::min(2, outBuffer.getNumChannels());
+                const int numAudioChannels = audioData.getNumChannels();
+
+                for (int channel = 0; channel < numChannels; ++channel)
                 {
-                    numUsed = resampler[i]
-                                  .process (playbackRatio,
-                                      audioData.getReadPointer (std::min (i, audioData.getNumChannels() - 1), offset),
-                                      tempOutBuffer.buffer.getWritePointer (i, startSamp),
-                                      numSamps);
-                    tempOutBuffer.buffer.applyGain(i, startSamp, numSamps, gains[i]);
-                }
+                    const auto* inputSamples = audioData.getReadPointer(std::min(channel, numAudioChannels - 1), offset);
+                    auto* outputSamples = outBuffer.getWritePointer(channel, startSamp);
 
-                adsr.applyEnvelopeToBuffer(tempOutBuffer.buffer, startSamp, numSamps);
-                for (int i = std::min (2, outBuffer.getNumChannels()); --i >= 0;)
-                    outBuffer.addFrom (i, startSamp, tempOutBuffer.buffer, i, 0, numSamps);
+                    numUsed = resampler[channel].processAdding(playbackRatio, inputSamples, outputSamples, numSamps,
+                        [&, gain = gains[channel], index = 0]() mutable
+                        {
+                            return gain * envValues[index++];
+                        });
+                }
 
                 offset += numUsed;
                 samplesLeftToPlay -= numSamps;
@@ -245,21 +245,24 @@ protected:
                 startFade = endFade;
 
                 int numUsed = 0;
-                tempOutBuffer.buffer.setSize(outBuffer.getNumChannels(), outBuffer.getNumSamples(), false, false, true);
-                tempOutBuffer.buffer.clear();
 
-                for (int i = std::min (2, outBuffer.getNumChannels()); --i >= 0;)
+                auto envValues = std::vector<float>((size_t)numSamps);
+                for (size_t i = 0; i < (size_t) numSamps; ++i)
+                    envValues[i] = adsr.getNextSample();
+                const int numChannels = std::min(2, outBuffer.getNumChannels());
+                const int numAudioChannels = scratch.buffer.getNumChannels();
+
+                for (int channel = 0; channel < numChannels; ++channel)
                 {
-                    numUsed = resampler[i].process (playbackRatio,
-                        scratch.buffer.getReadPointer (std::min (i, scratch.buffer.getNumChannels() - 1)),
-                        tempOutBuffer.buffer.getWritePointer (i, startSamp),
-                        numSamps);
-                    tempOutBuffer.buffer.applyGain(i, startSamp, numSamps, gains[i]);
-                }
+                    const auto* inputSamples = scratch.buffer.getReadPointer(std::min(channel, numAudioChannels - 1));
+                    auto* outputSamples = outBuffer.getWritePointer(channel, startSamp);
 
-                adsr.applyEnvelopeToBuffer(tempOutBuffer.buffer, startSamp, numSamps);
-                for (int i = std::min (2, outBuffer.getNumChannels()); --i >= 0;)
-                    outBuffer.addFrom (i, startSamp, tempOutBuffer.buffer, i, 0, numSamps);
+                    numUsed = resampler[channel].processAdding(playbackRatio, inputSamples, outputSamples, numSamps,
+                        [&, gain = gains[channel], index = 0]() mutable
+                        {
+                            return gain * envValues[index++];
+                        });
+                }
 
                 offset += numUsed;
 
@@ -281,8 +284,6 @@ protected:
         juce::ADSR adsr;
 
     private:
-        SamplerPlugin& owner;
-        TempAudioBuffer tempOutBuffer;
         JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (SampledNote)
     };
 

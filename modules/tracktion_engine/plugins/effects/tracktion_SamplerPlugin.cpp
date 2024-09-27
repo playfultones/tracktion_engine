@@ -561,7 +561,7 @@ void SamplerPlugin::SamplerSound::refreshFile()
 }
 
 SamplerPlugin::SampledNote* SamplerPlugin::createNote (int midiNote, int keyNote, float velocity, const tracktion::AudioFile& file, double sR, int sampleDelayFromBufferStart, const juce::AudioBuffer<float>& data, int lengthInSamples, float gainDb, float pan, bool openEnded) {
-    return new SampledNote(midiNote, keyNote, velocity, file, sR, sampleDelayFromBufferStart, data, lengthInSamples, gainDb, pan, openEnded, *this);
+    return new SampledNote(midiNote, keyNote, velocity, file, sR, sampleDelayFromBufferStart, data, lengthInSamples, gainDb, pan, openEnded, getADSRParams());
 }
 
 void SamplerPlugin::handleNoteOnMessage (tracktion::MidiMessageArray::MidiMessageWithSource& m) {
