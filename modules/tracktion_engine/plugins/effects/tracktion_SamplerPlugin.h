@@ -192,11 +192,11 @@ protected:
                 for (int i = std::min (2, outBuffer.getNumChannels()); --i >= 0;)
                 {
                     numUsed = resampler[i]
-                                  .processAdding (playbackRatio,
+                                  .process (playbackRatio,
                                       audioData.getReadPointer (std::min (i, audioData.getNumChannels() - 1), offset),
                                       tempOutBuffer.buffer.getWritePointer (i, startSamp),
-                                      numSamps,
-                                      gains[i]);
+                                      numSamps);
+                    tempOutBuffer.buffer.applyGain(i, startSamp, numSamps, gains[i]);
                 }
 
                 adsr.applyEnvelopeToBuffer(tempOutBuffer.buffer, startSamp, numSamps);
@@ -249,10 +249,13 @@ protected:
                 tempOutBuffer.buffer.clear();
 
                 for (int i = std::min (2, outBuffer.getNumChannels()); --i >= 0;)
-                    numUsed = resampler[i].processAdding (playbackRatio,
+                {
+                    numUsed = resampler[i].process (playbackRatio,
                         scratch.buffer.getReadPointer (std::min (i, scratch.buffer.getNumChannels() - 1)),
                         tempOutBuffer.buffer.getWritePointer (i, startSamp),
-                        numSamps, gains[i]);
+                        numSamps);
+                    tempOutBuffer.buffer.applyGain(i, startSamp, numSamps, gains[i]);
+                }
 
                 adsr.applyEnvelopeToBuffer(tempOutBuffer.buffer, startSamp, numSamps);
                 for (int i = std::min (2, outBuffer.getNumChannels()); --i >= 0;)
