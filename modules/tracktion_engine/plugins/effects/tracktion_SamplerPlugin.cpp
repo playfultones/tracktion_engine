@@ -269,7 +269,7 @@ double SamplerPlugin::getSoundLength (int index) const
 juce::String SamplerPlugin::addSound (const juce::String& source, const juce::String& name,
                                       double startTime, double length, float gainDb)
 {
-    const int maxNumSamples = 64;
+    const int maxNumSamples = 127;
 
     if (getNumSounds() >= maxNumSamples)
         return TRANS("Can't load any more samples");
