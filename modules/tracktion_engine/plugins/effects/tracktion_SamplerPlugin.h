@@ -11,8 +11,7 @@
 namespace tracktion { inline namespace engine
 {
 
-class SamplerPlugin  : public Plugin,
-                       private juce::AsyncUpdater
+class SamplerPlugin  : public Plugin
 {
 public:
     SamplerPlugin (PluginCreationInfo);
@@ -267,8 +266,23 @@ protected:
 
     juce::ValueTree getSound (int index) const;
 
+    friend class SoundLoadingJob;
     void valueTreeChanged() override;
-    void handleAsyncUpdate() override;
+    void handleSoundListUpdate();
+    struct SampleLoadingThreadPool
+    {
+    public:
+        SampleLoadingThreadPool() = default;
+        ~SampleLoadingThreadPool() {
+            threadPool.removeAllJobs(true, 1000);
+        }
+        juce::ThreadPool threadPool { juce::ThreadPoolOptions{}
+                .withThreadName ("Sampler sound loading")
+                .withDesiredThreadPriority(juce::Thread::Priority::background)
+                .withNumberOfThreads (1) };
+    };
+
+    juce::SharedResourcePointer<SampleLoadingThreadPool> soundLoadingPool;
 
     virtual SampledNote* createNote (int midiNote, int keyNote, float velocity, const AudioFile& file,
                                      double sampleRate, int sampleDelayFromBufferStart,

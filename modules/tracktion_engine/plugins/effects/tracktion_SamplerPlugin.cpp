@@ -12,9 +12,29 @@ namespace tracktion { inline namespace engine
 {
 
 //==============================================================================
-SamplerPlugin::SamplerPlugin (PluginCreationInfo info)  : Plugin (info)
+class SoundLoadingJob : public juce::ThreadPoolJob
 {
-    triggerAsyncUpdate();
+public:
+    SoundLoadingJob(SamplerPlugin& owner)
+        : ThreadPoolJob("SamplerSoundLoader"),
+          sampler(owner)
+    {
+    }
+    
+    JobStatus runJob() override
+    {
+        sampler.handleSoundListUpdate();
+        return jobHasFinished;
+    }
+    
+private:
+    SamplerPlugin& sampler;
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(SoundLoadingJob)
+};
+
+SamplerPlugin::SamplerPlugin (PluginCreationInfo info) : Plugin (info)
+{
+    soundLoadingPool->threadPool.addJob(new SoundLoadingJob(*this), true);
 }
 
 SamplerPlugin::~SamplerPlugin()
@@ -26,12 +46,13 @@ const char* SamplerPlugin::xmlTypeName = "sampler";
 
 void SamplerPlugin::valueTreeChanged()
 {
-    triggerAsyncUpdate();
+    soundLoadingPool->threadPool.addJob(new SoundLoadingJob(*this), true);
     Plugin::valueTreeChanged();
 }
 
-void SamplerPlugin::handleAsyncUpdate()
+void SamplerPlugin::handleSoundListUpdate()
 {
+    const auto startTime = juce::Time::getMillisecondCounterHiRes();
     juce::OwnedArray<SamplerSound> newSounds;
 
     auto numSounds = state.getNumChildren();
@@ -59,6 +80,8 @@ void SamplerPlugin::handleAsyncUpdate()
         }
     }
 
+    const auto newSoundCount = newSounds.size();
+
     for (auto newSound : newSounds)
     {
         for (auto s : soundList)
@@ -85,6 +108,7 @@ void SamplerPlugin::handleAsyncUpdate()
 
     newSounds.clear();
     changed();
+    juce::Logger::writeToLog("Async update handling of sampler took " + juce::String(juce::Time::getMillisecondCounterHiRes() - startTime) + " ms. Nr. of sounds:" + juce::String(newSoundCount));
 }
 
 void SamplerPlugin::initialise (const PluginInitialisationInfo& pII)
@@ -338,7 +362,7 @@ void SamplerPlugin::setSoundMedia (int index, const juce::String& source)
 {
     auto v = getSound (index);
     v.setProperty (IDs::source, source, getUndoManager());
-    triggerAsyncUpdate();
+    soundLoadingPool->threadPool.addJob(new SoundLoadingJob(*this), true);
 }
 
 juce::ValueTree SamplerPlugin::getSound (int soundIndex) const
